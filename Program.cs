@@ -1,137 +1,115 @@
-﻿using System.Text.RegularExpressions;
+﻿using System;
+using System.Net.Http;
+using System.IO;
+using System.Text.RegularExpressions;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 
-namespace simple_crawler;
-
-/// <summary>
-/// Class <c>Crawler</c> access a webpage based on the given url, then retrieve content
-/// of that webpage and recursively access to linked pages from that web page
-/// </summary>
-public partial class Crawler
+namespace SimpleCrawler
 {
-    
-    protected String? basedFolder = null;
-    protected int maxLinksPerPage = 3;
-
-    /// <summary>
-    /// Method <c>SetBasedFolder</c> sets based folder to store retrieved contents.
-    /// </summary>
-    /// <param name="folder">the name of the based folder</param>
-    public void SetBasedFolder(String folder)
+    public class Crawler
     {
-        if (String.IsNullOrEmpty(folder))
-        {
-            throw new ArgumentNullException(nameof(folder));
-        }
-        basedFolder = folder;
-    }
+        protected string? basedFolder = null;
+        protected int maxLinksPerPage = 3;
 
-    /// <summary>
-    /// Method <c>SetMaxLinkPerPage</c> sets the maximum number of links that will be recurviely access from a page
-    /// </summary>
-    /// <param name="max">the maximum number of links</param>
-    public void SetMaxLinksPerPage(int max)
-    {
-        maxLinksPerPage = max;
-    }
-
-    /// <summary>
-    /// Method <c>GetPage</c> gets a web page based on the url, then recursively access the links in the web page
-    /// to get the linked pages.
-    /// </summary>
-    /// <param name="url">the URL of the webpage to retreive</param>
-    /// <param name="level">the number of level to recursively access to</param>
-    public async Task GetPage(String url, int level)
-    {
-        // Your code here
-        // Note: you need this step for recursive operation
-        if (basedFolder == null)
+        // Method to set the base folder where content will be stored
+        public void SetBasedFolder(string folder)
         {
-            throw new Exception("Please set the value of base folder using SetBasedFolder method first.");
-        }
-        if (String.IsNullOrEmpty(url))
-        {
-            throw new ArgumentNullException(nameof(url));
-        }
-
-        // For simplicity, we will use <c>HttpClient</c> here, but if you want you can try <c>TcpClient</c>
-        HttpClient client = new();
-
-        try
-        {
-            // Get content from url
-            HttpResponseMessage response = await client.GetAsync(url);
-            if (response.IsSuccessStatusCode)
+            if (string.IsNullOrEmpty(folder))
             {
-                String responseBody = await response.Content.ReadAsStringAsync();
-                // Reformat URL to a valid filename
-                String fileName = url.Replace(":", "_").Replace("/", "_").Replace(".", "_") + ".html";
-                // Store content in file
-                File.WriteAllText(basedFolder + "/" + fileName, responseBody);
-                // Get list of links from content
-                ISet<String> links = GetLinksFromPage(responseBody);
-                int count = 0;
-                // For each link, let's recursive!!!
-                foreach (String link in links)
-                {
-                    // We only interested in http/https link
-                    if(link.StartsWith("http", StringComparison.InvariantCultureIgnoreCase))
-                    {
-                        // Your code here
-                        // Note: It should be recursive operation here
+                throw new ArgumentNullException(nameof(folder));
+            }
+            basedFolder = folder;
+        }
 
-                        // limit number of links in the page, otherwise it will load lots of data
-                        if (++count >= maxLinksPerPage) break;
+        // Method to set the maximum number of links to crawl per page
+        public void SetMaxLinksPerPage(int max)
+        {
+            maxLinksPerPage = max;
+        }
+
+        // The core method to download a page and crawl links recursively
+        public async Task GetPage(string url, int level)
+        {
+            if (basedFolder == null)
+            {
+                throw new Exception("Please set the base folder using SetBasedFolder method first.");
+            }
+            if (string.IsNullOrEmpty(url))
+            {
+                throw new ArgumentNullException(nameof(url));
+            }
+
+            // Simple HttpClient to fetch content from the URL
+            HttpClient client = new();
+            try
+            {
+                // Get the content from the URL
+                HttpResponseMessage response = await client.GetAsync(url);
+                if (response.IsSuccessStatusCode)
+                {
+                    string responseBody = await response.Content.ReadAsStringAsync();
+                    // Reformat URL to create a valid filename
+                    string fileName = url.Replace(":", "_").Replace("/", "_").Replace(".", "_") + ".html";
+                    // Save the content to a file
+                    File.WriteAllText(basedFolder + "/" + fileName, responseBody);
+
+                    // If we've reached the max depth (level 0), stop recursion
+                    if (level <= 0) return;
+
+                    // Extract links from the page content
+                    List<string> links = GetLinksFromPage(responseBody);
+                    int count = 0;
+                    // Loop through each link and recursively download it
+                    foreach (string link in links)
+                    {
+                        // Only follow http/https links
+                        if (link.StartsWith("http", StringComparison.InvariantCultureIgnoreCase))
+                        {
+                            if (++count > maxLinksPerPage) break; // Stop if we hit the max link limit
+                            // Recursively get the linked pages
+                            await GetPage(link, level - 1);
+                        }
                     }
                 }
+                else
+                {
+                    Console.WriteLine("Failed to load page: {0}", response.StatusCode);
+                }
             }
-            else
+            catch (Exception ex)
             {
-                Console.WriteLine("Can't load content with return status {0}", response.StatusCode);
+                Console.WriteLine("Error: {0}", ex.Message);
             }
         }
-        catch (HttpRequestException ex)
+
+        // Method to extract links using a simple regular expression
+        public static List<string> GetLinksFromPage(string content)
         {
-            Console.WriteLine("\nException caught:");
-            Console.WriteLine("Message :{0}", ex.Message);
+            List<string> links = new();
+            Regex regex = new Regex(@"href\s*=\s*""(http[s]?://[^\s""]+)""", RegexOptions.IgnoreCase);
+            var matches = regex.Matches(content);
+
+            foreach (Match match in matches)
+            {
+                links.Add(match.Groups[1].Value);
+            }
+
+            return links;
         }
     }
 
-    // Template for regular express to extract links
-    [GeneratedRegex("(?<=<a\\s*?href=(?:'|\"))[^'\"]*?(?=(?:'|\"))")]
-    private static partial Regex MyRegex();
-
-    /// <summary>
-    /// Method <c>GetLInksFromPage</c> extracts links (i.e., <a href="link">...</a>) from web content.
-    /// </summary>
-    /// <param name="content">HTML page that will be processed to extract links</param>
-    public static ISet<string> GetLinksFromPage(string content)
+    class Program
     {
-        Regex regexLink = MyRegex();
-
-        HashSet<string> newLinks = [];
-        // We apply regular expression to find matches
-        foreach (var match in regexLink.Matches(content))
+        static async Task Main(string[] args)
         {
-            // For each match, add to hashset (why set? why not list?)
-            String? mString = match.ToString();
-            if (String.IsNullOrEmpty(mString))
-            {
-                continue;
-            }
-            newLinks.Add(mString);
-        }
-        return newLinks;
-    }
+            Crawler crawler = new();
+            crawler.SetBasedFolder("./"); // Set folder to store pages
+            crawler.SetMaxLinksPerPage(3); // Limit to 3 links per page
 
-}
-class Program
-{
-    static void Main(string[] args)
-    {
-        Crawler cw = new();
-        // Can you improve this code?
-        cw.SetBasedFolder(".");
-        cw.SetMaxLinksPerPage(5);
-        cw.GetPage("https://dandadan.net/", 2).Wait();
+            // Start crawling from a hardcoded URL with a depth of 2
+            await crawler.GetPage("https://dandadan.net/", 2); // Change URL as needed
+        }
     }
 }
+
